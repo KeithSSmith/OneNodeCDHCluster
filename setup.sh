@@ -6,6 +6,11 @@ echo never > /sys/kernel/mm/transparent_hugepage/enabled
 # TODO make 2 above commands to be permanent
 echo  "vm.swappiness = 1" >> /etc/sysctl.conf
 sysctl vm.swappiness=1
+echo  "fs.file-max = 50000" >> /etc/sysctl.conf
+sysctl fs.file-max=50000
+cp ~/OneNodeCDHCluster/limits.conf /etc/security/limits
+ulimit -n 50000
+cp ~/OneNodeCDHCluster/90-nproc.conf /etc/security/limits.d/
 # CDSW requires Centos 7.5, so we trick it to believe it is...
 echo "CentOS Linux release 7.5.1810 (Core)" > /etc/redhat-release
 
@@ -16,25 +21,25 @@ yum install -y java-1.8.0-openjdk-devel vim wget curl git bind-utils
 case "$1" in
         aws)
             ;;
-         
+
         azure)
             curl -sSL https://raw.githubusercontent.com/cloudera/director-scripts/master/azure-bootstrap-scripts/os-generic-bootstrap.sh | sh
             sleep 10
             ;;
-         
+
         gcp)
             ;;
-            
+
         openstack)
             echo "Not supported yet!"
             exit 1
-            ;;         
+            ;;
         *)
             echo $"Usage: $0 {aws|azure|gcp} template-file [docker-device]"
             echo $"example: ./setup.sh gcp"
             echo $"example: ./setup.sh azure default_template.json"
             echo $"example: ./setup.sh aws cdsw_template.json /dev/xvdb"
-            exit 1           
+            exit 1
 esac
 
 TEMPLATE=$2
@@ -56,6 +61,7 @@ sed -i 's/SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
 echo "-- Install CM and MariaDB"
 wget https://archive.cloudera.com/cm6/6.2.0/redhat7/yum/cloudera-manager.repo -P /etc/yum.repos.d/
 rpm --import https://archive.cloudera.com/cm6/6.2.0/redhat7/yum/RPM-GPG-KEY-cloudera
+cp ~/OneNodeCDHCluster/mariadb-10-1.repo /etc/yum.repos.d/
 yum install -y cloudera-manager-daemons cloudera-manager-agent cloudera-manager-server mariadb-server
 cat mariadb.config > /etc/my.cnf
 
@@ -67,6 +73,26 @@ wget https://archive.cloudera.com/cdsw1/1.5.0/csd/CLOUDERA_DATA_SCIENCE_WORKBENC
 
 chown cloudera-scm:cloudera-scm /opt/cloudera/csd/*
 chmod 644 /opt/cloudera/csd/*
+
+echo "-- Install CEM Tarballs"
+mkdir -p /opt/cloudera/cem
+wget https://archive.cloudera.com/CEM/centos7/1.x/updates/1.0.0.0/CEM-1.0.0.0-centos7-tars-tarball.tar.gz -P /opt/cloudera/cem
+tar xvzf /opt/cloudera/cem/CEM-1.0.0.0-centos7-tars-tarball.tar.gz -C /opt/cloudera/cem
+tar xvzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/efm/efm-1.0.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
+tar xvzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/minifi/minifi-0.6.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
+tar xvzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/minifi/minifi-toolkit-0.6.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
+rm -f /opt/cloudera/cem/CEM-1.0.0.0-centos7-tars-tarball.tar.gz
+ln -s /opt/cloudera/cem/efm-1.0.0.1.0.0.0-54 /opt/cloudera/cem/efm
+ln -s /opt/cloudera/cem/minifi-0.6.0.1.0.0.0-54 /opt/cloudera/cem/minifi
+ln -s /opt/cloudera/cem/efm/bin/efm.sh /etc/init.d/efm
+chown -R centos:centos /opt/cloudera/cem/efm-1.0.0.1.0.0.0-54
+chown -R centos:centos /opt/cloudera/cem/minifi-0.6.0.1.0.0.0-54
+chown -R centos:centos /opt/cloudera/cem/minifi-toolkit-0.6.0.1.0.0.0-54
+rm -f /opt/cloudera/cem/efm/conf/efm.properties
+cp ~/OneNodeCDHCluster/efm.properties /opt/cloudera/cem/efm/conf
+rm -f /opt/cloudera/cem/minifi/conf/bootstrap.conf
+cp ~/OneNodeCDHCluster/bootstrap.conf /opt/cloudera/cem/minifi/conf
+/opt/cloudera/cem/minifi/bin/minifi.sh install
 
 echo "--Enable and start MariaDB"
 systemctl enable mariadb
@@ -122,3 +148,18 @@ sed -i "s/YourHostname/`hostname -f`/g" ~/OneNodeCDHCluster/create_cluster.py
 python ~/OneNodeCDHCluster/create_cluster.py $TEMPLATE
 
 echo "-- At this point you can login into Cloudera Manager host on port 7180 and follow the deployment of the cluster"
+
+curl -X PUT -u "admin:admin" -i \
+  -H "content-type:application/json" \
+  -d '{ "items" : [ {
+    "name" : "staging/nifi.properties.xml_role_safety_valve",
+    "value" : "<property><name>nifi.remote.input.host</name><value>0.0.0.0</value></property><property><name>nifi.remote.input.secure</name><value>false</value></property><property><name>nifi.remote.input.socket.port</name><value>1026</value></property><property><name>nifi.remote.input.http.enabled</name><value>true</value></property><property><name>nifi.remote.input.http.transaction.ttl</name><value>30 sec</value></property>"
+  } ]
+}' http://localhost:7180/api/v32/clusters/OneNodeCluster/services/nifi/roleConfigGroups/nifi-NIFI_NODE-BASE/config
+
+curl -X POST -u "admin:admin" -i http://localhost:7180/api/v32/clusters/OneNodeCluster/services/nifi/commands/restart
+
+service efm start
+service minifi start
+
+echo "-- Cloudera Edge Flow Manager and MiNiFi have started"
