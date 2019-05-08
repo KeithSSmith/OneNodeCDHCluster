@@ -1,9 +1,11 @@
 # One Node EDGE2AI CDH Cluster
 
-This script automatically sets up a CDH cluster on the public cloud on a single VM with the following 14 services:
+This script automatically sets up a CDH cluster on the public cloud on a single VM with the following 16 services: 
 
 - CDSW
-- NiFi
+- MiNiFi
+- EFM
+- NiFi 
 - NiFi CA
 - NiFi Registry
 - Kafka
@@ -26,18 +28,20 @@ As this cluster is meant to be used for demos, experimenting, training, and work
 Below are instructions for creating the cluster with or without CDSW service. CDSW requires some extra resources (more powerful instance, and a secondary disk for the docker device).
 
 ### Provisioning Cluster without CDSW
-- Create a Centos 7 VM with at least 4 vCPUs/ 16GB RAM.
+- Create a Centos 7 VM with at least 8 vCPUs/ 32 GB RAM.
 - OS disk size: at least 50 GB.
 
 ### Provisioning Cluster with CDSW
-- Create a Centos 7 VM with at least 8 vCPUs/ 32GB RAM.
+- Create a Centos 7 VM with at least 16 vCPUs/ 64 GB RAM.
 - OS disk size: at least 100 GB.
 - Docker device disk: at least 200GB SSD disk.
   - Node: you need a fast disk more than you need a large disk: aim for a disk with 3000 IOPS. This might mean choosing a 1TB disk.
 
 ### Configuration and installation
 - If you created the VM on Azure and need to resize the OS disk, here are the [instructions](how-to-resize-os-disk.md).
-- add inbound rule to the Security Group to allow your IP only, for all ports.
+- add 2 inbound rules to the Security Group:
+  - to allow your IP only, for all ports.
+  - to allow the VM's own IP, for all ports.
 - ssh into VM and copy this repo.
 
 ```
@@ -77,25 +81,24 @@ You can also check the CDSW deployment status on CM > CDSW service > Instances >
 
 ## Troubleshooting and known issues
 
-- CDSW service will issue a red alert `HTTP port check timed out after 60 seconds.`. You can disregard that, or add the instance IP to the Security Group, so that inbound traffic from the instance's own IP address is allowed.
 
 ### Docker device
 
 To find out what the docker device mount point is, use `lsblk`. See below examples:
 
 
-AWS, using a M5.2xlarge
+AWS, using a M5.2xlarge or M5.4xlarge
 ```
 $ lsblk
 NAME        MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
 nvme0n1     259:1    0  100G  0 disk
 +-nvme0n1p1 259:2    0  100G  0 part /
-nvme1n1     259:0    0  200G  0 disk
+nvme1n1     259:0    0 1000G  0 disk
 
 $ ./setup.sh aws cdsw_template.json /dev/nvme1n1
 ```
 
-Azure Standard DS4 v2
+Azure Standard D8s v3 or Standard D16s v3 
 ```
 $ lsblk
 NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
@@ -105,19 +108,19 @@ sda      8:0    0   30G  0 disk
 +-sda2   8:2    0 29.5G  0 part /
 sdb      8:16   0   56G  0 disk
 +-sdb1   8:17   0   56G  0 part /mnt/resource
-sdc      8:32   0  200G  0 disk
+sdc      8:32   0 1000G  0 disk
 sr0     11:0    1  628K  0 rom
 
 $ ./setup.sh azure cdsw_template.json /dev/sdc
 ```
 
-GCP n1-standard-8
+GCP n1-standard-8 or n1-standard-16
 ```
 $ lsblk
 NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
 sda      8:0    0  100G  0 disk
 └─sda1   8:1    0  100G  0 part /
-sdb      8:16   0  200G  0 disk
+sdb      8:16   0 1000G  0 disk 
 
 $ ./setup.sh gcp cdsw_template.json /dev/sdb
 ```

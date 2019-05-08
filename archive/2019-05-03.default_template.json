@@ -420,21 +420,6 @@
 	    "roleConfigGroups": [
 		{
 		    "base": true,
-        "configs": [
-            {
-                "name": "nifi.remote.input.secure",
-                "value": "false"
-            },
-            {
-                "name": "nifi.remote.input.socket.port",
-                "value": "50999"
-            },
-            {
-                "name": "nifi.remote.input.host",
-                "value": "YourHostname"
-            }
-        ],
-
 		    "refName": "nifi-NIFI_NODE-BASE",
 		    "roleType": "NIFI_NODE"
 		}

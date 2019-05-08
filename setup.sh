@@ -21,15 +21,14 @@ yum install -y java-1.8.0-openjdk-devel vim wget curl git bind-utils
 case "$1" in
         aws)
             ;;
-
         azure)
             curl -sSL https://raw.githubusercontent.com/cloudera/director-scripts/master/azure-bootstrap-scripts/os-generic-bootstrap.sh | sh
             sleep 10
+            umount /mnt/resource
+            mount /dev/sdb1 /opt
             ;;
-
         gcp)
             ;;
-
         openstack)
             echo "Not supported yet!"
             exit 1
@@ -48,7 +47,7 @@ DOCKERDEVICE=$3
 
 
 echo "-- Configure networking"
-PUBLIC_IP=`dig +short myip.opendns.com @resolver1.opendns.com`
+PUBLIC_IP=`curl https://api.ipify.org/`
 hostnamectl set-hostname `hostname -f`
 echo "`hostname -I` `hostname`" >> /etc/hosts
 sed -i "s/HOSTNAME=.*/HOSTNAME=`hostname`/" /etc/sysconfig/network
@@ -58,41 +57,29 @@ systemctl stop firewalld
 setenforce 0
 sed -i 's/SELINUX=.*/SELINUX=permissive/' /etc/selinux/config
 
-echo "-- Install CM and MariaDB"
+echo "-- Install CM"
 wget https://archive.cloudera.com/cm6/6.2.0/redhat7/yum/cloudera-manager.repo -P /etc/yum.repos.d/
-rpm --import https://archive.cloudera.com/cm6/6.2.0/redhat7/yum/RPM-GPG-KEY-cloudera
-cp ~/OneNodeCDHCluster/mariadb-10-1.repo /etc/yum.repos.d/
-yum install -y cloudera-manager-daemons cloudera-manager-agent cloudera-manager-server mariadb-server
+yum install -y cloudera-manager-daemons cloudera-manager-agent cloudera-manager-server
+
+## MySQL
+#rpm --import https://archive.cloudera.com/cm6/6.2.0/redhat7/yum/RPM-GPG-KEY-cloudera
+#wget http://repo.mysql.com/mysql-community-release-el7-5.noarch.rpm
+#yes | rpm -ivh mysql-community-release-el7-5.noarch.rpm
+#yum install -y mysql-server
+#cat mysql.config > /etc/my.cnf
+
+## MariaDB 10.1
+cat - >/etc/yum.repos.d/MariaDB.repo <<EOF
+[mariadb]
+name = MariaDB
+baseurl = http://yum.mariadb.org/10.1/centos7-amd64
+gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+gpgcheck=1
+EOF
+
+yum install -y MariaDB-server MariaDB-client
 cat mariadb.config > /etc/my.cnf
 
-echo "-- Install CSDs"
-wget https://archive.cloudera.com/CFM/csd/1.0.0.0/NIFI-1.9.0.1.0.0.0-90.jar -P /opt/cloudera/csd/
-wget https://archive.cloudera.com/CFM/csd/1.0.0.0/NIFICA-1.9.0.1.0.0.0-90.jar -P /opt/cloudera/csd/
-wget https://archive.cloudera.com/CFM/csd/1.0.0.0/NIFIREGISTRY-0.3.0.1.0.0.0-90.jar -P /opt/cloudera/csd/
-wget https://archive.cloudera.com/cdsw1/1.5.0/csd/CLOUDERA_DATA_SCIENCE_WORKBENCH-CDH6-1.5.0.jar -P /opt/cloudera/csd/
-
-chown cloudera-scm:cloudera-scm /opt/cloudera/csd/*
-chmod 644 /opt/cloudera/csd/*
-
-echo "-- Install CEM Tarballs"
-mkdir -p /opt/cloudera/cem
-wget https://archive.cloudera.com/CEM/centos7/1.x/updates/1.0.0.0/CEM-1.0.0.0-centos7-tars-tarball.tar.gz -P /opt/cloudera/cem
-tar xvzf /opt/cloudera/cem/CEM-1.0.0.0-centos7-tars-tarball.tar.gz -C /opt/cloudera/cem
-tar xvzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/efm/efm-1.0.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
-tar xvzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/minifi/minifi-0.6.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
-tar xvzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/minifi/minifi-toolkit-0.6.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
-rm -f /opt/cloudera/cem/CEM-1.0.0.0-centos7-tars-tarball.tar.gz
-ln -s /opt/cloudera/cem/efm-1.0.0.1.0.0.0-54 /opt/cloudera/cem/efm
-ln -s /opt/cloudera/cem/minifi-0.6.0.1.0.0.0-54 /opt/cloudera/cem/minifi
-ln -s /opt/cloudera/cem/efm/bin/efm.sh /etc/init.d/efm
-chown -R centos:centos /opt/cloudera/cem/efm-1.0.0.1.0.0.0-54
-chown -R centos:centos /opt/cloudera/cem/minifi-0.6.0.1.0.0.0-54
-chown -R centos:centos /opt/cloudera/cem/minifi-toolkit-0.6.0.1.0.0.0-54
-rm -f /opt/cloudera/cem/efm/conf/efm.properties
-cp ~/OneNodeCDHCluster/efm.properties /opt/cloudera/cem/efm/conf
-rm -f /opt/cloudera/cem/minifi/conf/bootstrap.conf
-cp ~/OneNodeCDHCluster/bootstrap.conf /opt/cloudera/cem/minifi/conf
-/opt/cloudera/cem/minifi/bin/minifi.sh install
 
 echo "--Enable and start MariaDB"
 systemctl enable mariadb
@@ -112,6 +99,37 @@ mysql -u root < ~/OneNodeCDHCluster/secure_mariadb.sql
 
 echo "-- Prepare CM database 'scm'"
 /opt/cloudera/cm/schema/scm_prepare_database.sh mysql scm scm cloudera
+
+echo "-- Install CSDs"
+wget https://archive.cloudera.com/CFM/csd/1.0.0.0/NIFI-1.9.0.1.0.0.0-90.jar -P /opt/cloudera/csd/
+wget https://archive.cloudera.com/CFM/csd/1.0.0.0/NIFICA-1.9.0.1.0.0.0-90.jar -P /opt/cloudera/csd/
+wget https://archive.cloudera.com/CFM/csd/1.0.0.0/NIFIREGISTRY-0.3.0.1.0.0.0-90.jar -P /opt/cloudera/csd/
+wget https://archive.cloudera.com/cdsw1/1.5.0/csd/CLOUDERA_DATA_SCIENCE_WORKBENCH-CDH6-1.5.0.jar -P /opt/cloudera/csd/
+chown cloudera-scm:cloudera-scm /opt/cloudera/csd/*
+chmod 644 /opt/cloudera/csd/*
+
+echo "-- Install CEM Tarballs"
+mkdir -p /opt/cloudera/cem
+wget https://archive.cloudera.com/CEM/centos7/1.x/updates/1.0.0.0/CEM-1.0.0.0-centos7-tars-tarball.tar.gz -P /opt/cloudera/cem
+tar xzf /opt/cloudera/cem/CEM-1.0.0.0-centos7-tars-tarball.tar.gz -C /opt/cloudera/cem
+tar xzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/efm/efm-1.0.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
+tar xzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/minifi/minifi-0.6.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
+tar xzf /opt/cloudera/cem/CEM/centos7/1.0.0.0-54/tars/minifi/minifi-toolkit-0.6.0.1.0.0.0-54-bin.tar.gz -C /opt/cloudera/cem
+rm -f /opt/cloudera/cem/CEM-1.0.0.0-centos7-tars-tarball.tar.gz
+ln -s /opt/cloudera/cem/efm-1.0.0.1.0.0.0-54 /opt/cloudera/cem/efm
+ln -s /opt/cloudera/cem/minifi-0.6.0.1.0.0.0-54 /opt/cloudera/cem/minifi
+ln -s /opt/cloudera/cem/efm/bin/efm.sh /etc/init.d/efm
+chown -R root:root /opt/cloudera/cem/efm-1.0.0.1.0.0.0-54
+chown -R root:root /opt/cloudera/cem/minifi-0.6.0.1.0.0.0-54
+chown -R root:root /opt/cloudera/cem/minifi-toolkit-0.6.0.1.0.0.0-54
+rm -f /opt/cloudera/cem/efm/conf/efm.properties
+cp ~/OneNodeCDHCluster/efm.properties /opt/cloudera/cem/efm/conf
+rm -f /opt/cloudera/cem/minifi/conf/bootstrap.conf
+cp ~/OneNodeCDHCluster/bootstrap.conf /opt/cloudera/cem/minifi/conf
+sed -i "s/YourHostname/`hostname -f`/g" /opt/cloudera/cem/efm/conf/efm.properties
+sed -i "s/YourHostname/`hostname -f`/g" /opt/cloudera/cem/minifi/conf/bootstrap.conf
+/opt/cloudera/cem/minifi/bin/minifi.sh install
+
 
 echo "-- Enable passwordless root login via rsa key"
 ssh-keygen -f ~/myRSAkey -t rsa -N ""
@@ -146,6 +164,10 @@ sed -i "s#YourDockerDevice#$DOCKERDEVICE#g" ~/OneNodeCDHCluster/$TEMPLATE
 sed -i "s/YourHostname/`hostname -f`/g" ~/OneNodeCDHCluster/create_cluster.py
 
 python ~/OneNodeCDHCluster/create_cluster.py $TEMPLATE
+
+# configure and start EFM and Minifi
+systemctl start efm
+systemctl start minifi
 
 echo "-- At this point you can login into Cloudera Manager host on port 7180 and follow the deployment of the cluster"
 
